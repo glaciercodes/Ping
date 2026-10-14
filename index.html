@@ -13,8 +13,7 @@
   body{margin:0;background:var(--bg);color:var(--text);font:16px/1.5 system-ui,-apple-system,Segoe UI,Roboto,sans-serif}
   .wrap{max-width:640px;margin:0 auto;padding:32px 16px 80px}
   h1{font-size:26px;margin:0 0 6px}
-  .sub{color:var(--muted);margin:0 0 22px}
-  .top{border:1px solid var(--line);border-radius:14px;padding:16px 18px;margin-bottom:18px;background:var(--soft)}
+  .sub{color:var(--muted);margin:0 0 24px}
   details.plat{border:1px solid var(--line);border-radius:14px;margin-bottom:14px;background:var(--bg)}
   details.plat>summary{list-style:none;cursor:pointer;display:flex;align-items:center;gap:12px;padding:18px}
   details.plat>summary::-webkit-details-marker{display:none}
@@ -61,7 +60,6 @@
   .chk{display:flex;align-items:center;gap:8px;font-size:14px;color:var(--muted)}
   .chk input{width:auto}
   .more>summary{cursor:pointer;color:var(--muted);font-size:14px}
-  .small{font-size:13px;color:var(--muted);margin:6px 0 0}
   footer{margin-top:28px;color:var(--muted);font-size:13px}
 </style>
 </head>
@@ -70,13 +68,6 @@
   <h1>Model Pinger</h1>
   <p class="sub">Open a platform, paste your API key, pick a model and press Ping. You get the platform's raw response. Green means it replied, red means it did not.</p>
 
-  <div class="top">
-    <label>Relay link
-      <input id="proxy" placeholder="https://your-relay.workers.dev/?url=" autocomplete="off" spellcheck="false">
-    </label>
-    <p class="small">Paste the link of your relay here once (see the setup steps). Browsers cannot call these platforms directly.</p>
-  </div>
-
   <main id="platforms"></main>
 
   <details class="more">
@@ -84,10 +75,11 @@
     <p><button id="clearAll">Clear everything saved in this browser</button></p>
   </details>
 
-  <footer>Your key is sent only to your relay and the platform you test. It is never stored in this site's code.</footer>
+  <footer>Your key is sent only to this site's own server and the platform you test. It is never stored in the code.</footer>
 </div>
 
 <script>
+// To add a platform, add it here AND in api/relay.js (ALLOWED list).
 const PLATFORMS = [
   {id:'justwoker',   name:'Just Woker',  url:'https://api.justwoker.icu'},
   {id:'conduit',     name:'Conduit',     url:'https://conduit.ozdoev.net'},
@@ -103,9 +95,9 @@ const MODELS = [
 const $  = (s,r=document)=>r.querySelector(s);
 const $$ = (s,r=document)=>[...r.querySelectorAll(s)];
 const esc = s=>String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-const LS='modelPinger.v3';
+const LS='modelPinger.v4';
 let store={}; try{store=JSON.parse(localStorage.getItem(LS)||'{}')||{}}catch{store={}}
-store.keys??={}; store.remember??={}; store.bases??={}; store.proxy??='';
+store.keys??={}; store.remember??={};
 const save=()=>{try{localStorage.setItem(LS,JSON.stringify(store))}catch{}};
 const chats={};
 
@@ -143,20 +135,12 @@ function cardHTML(p){
         <div class="row"><button class="primary" data-act="send">Send</button><button data-act="clearchat">Clear chat</button></div>
       </div>
       <details class="more" data-chatraw hidden><summary>Show raw response</summary><div class="result wait" style="margin-top:8px"><pre></pre></div></details>
-
-      <details class="more">
-        <summary>Advanced</summary>
-        <label style="margin-top:10px">Platform address
-          <input data-f="base" value="${esc(store.bases[p.id]||p.url)}" autocomplete="off" spellcheck="false">
-        </label>
-      </details>
     </div>
   </details>`;
 }
 $('#platforms').innerHTML=PLATFORMS.map(cardHTML).join('');
-$('#proxy').value=store.proxy;
 
-// ---------- Network ----------
+// ---------- Network (goes through this site's own /api/relay, so the browser never blocks it) ----------
 const getModel=card=>{const s=$('[data-f=model]',card).value;return s==='__other'?$('[data-f=other]',card).value.trim():s};
 function extractText(j){
   if(!j) return '';
@@ -164,31 +148,31 @@ function extractText(j){
   return j.choices?.[0]?.message?.content||'';
 }
 
-// Same request Claude Code makes: POST {base}/v1/messages with Authorization: Bearer <token>.
 async function call(card,model,messages,max){
   const key=$('[data-f=key]',card).value.trim();
   if(!key) return {ok:false,status:0,ms:0,cfg:'Paste your API key first.'};
   if(!model) return {ok:false,status:0,ms:0,cfg:'Choose a model first.'};
-  const base=$('[data-f=base]',card).value.trim().replace(/\/+$/,'');
-  let url=base+'/v1/messages';
-  const px=(store.proxy||'').trim();
-  if(px) url=px+(px.includes('?')?encodeURIComponent(url):url);
-  const headers={'content-type':'application/json','anthropic-version':'2023-06-01','authorization':'Bearer '+key};
-  const ctrl=new AbortController(); const timer=setTimeout(()=>ctrl.abort(),60000); const t0=performance.now();
+  const p=PLATFORMS.find(x=>x.id===card.dataset.p);
+  const ctrl=new AbortController(); const timer=setTimeout(()=>ctrl.abort(),65000); const t0=performance.now();
   try{
-    const res=await fetch(url,{method:'POST',headers,body:JSON.stringify({model,max_tokens:max,messages}),signal:ctrl.signal});
+    const res=await fetch('/api/relay',{
+      method:'POST', headers:{'content-type':'application/json'}, signal:ctrl.signal,
+      body:JSON.stringify({base:p.url,key,payload:{model,max_tokens:max,messages}}),
+    });
     const text=await res.text(); let json=null; try{json=JSON.parse(text)}catch{}
-    return {ok:res.ok,status:res.status,ms:Math.round(performance.now()-t0),text,json,noRelay:!px};
+    return {ok:res.ok,status:res.status,ms:Math.round(performance.now()-t0),text,json,viaRelay:res.headers.get('x-relay')==='1'};
   }catch(e){
-    return {ok:false,status:0,ms:Math.round(performance.now()-t0),net:e.name+': '+e.message,noRelay:!px};
+    return {ok:false,status:0,ms:Math.round(performance.now()-t0),net:e.name+': '+e.message};
   }finally{clearTimeout(timer)}
 }
 
 // Raw output only: status line + the body exactly as the platform sent it.
 function raw(r){
   if(r.cfg) return r.cfg;
-  if(r.net) return 'No response received.\nBrowser error: '+r.net+'\n\nThe request was blocked before the platform answered, so there is no response to show.'+(r.noRelay?' Paste your relay link at the top of the page.':'');
-  return 'HTTP '+r.status+'  ('+r.ms+' ms)\n\n'+(r.json?JSON.stringify(r.json,null,2):(r.text||'(empty body)'));
+  if(r.net) return 'No response received.\nBrowser error: '+r.net;
+  let s='HTTP '+r.status+'  ('+r.ms+' ms)\n\n'+(r.json?JSON.stringify(r.json,null,2):(r.text||'(empty body)'));
+  if(!r.viaRelay) s='This page is not running on Vercel with its api/relay.js file, so nothing reached the platform.\n\n'+s;
+  return s;
 }
 
 function setPill(card,ok,text){const p=$('[data-pill]',card);p.className='pill '+(ok?'ok':'bad');p.textContent=text}
@@ -250,7 +234,6 @@ document.addEventListener('change',e=>{
   const pid=card.dataset.p, f=e.target.dataset.f;
   if(f==='model'){$('[data-f=other]',card).hidden=e.target.value!=='__other';renderChat(card)}
   if(f==='other') renderChat(card);
-  if(f==='base') store.bases[pid]=e.target.value.trim();
   if(f==='remember') store.remember[pid]=e.target.checked;
   if(f==='key'||f==='remember'){
     if(store.remember[pid]) store.keys[pid]=$('[data-f=key]',card).value.trim(); else delete store.keys[pid];
@@ -260,7 +243,6 @@ document.addEventListener('change',e=>{
 document.addEventListener('keydown',e=>{
   if(e.key==='Enter'&&(e.ctrlKey||e.metaKey)&&e.target.matches('[data-f=msg]')){e.preventDefault();send(e.target.closest('.plat'))}
 });
-$('#proxy').addEventListener('change',e=>{store.proxy=e.target.value.trim();save()});
 $('#clearAll').addEventListener('click',()=>{
   if(!confirm('Remove all saved keys and settings from this browser?')) return;
   try{localStorage.removeItem(LS)}catch{} location.reload();
