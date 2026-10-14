@@ -11,10 +11,10 @@ const ALLOWED = [
 ];
 
 const STYLES = [
-  { name: 'Authorization Bearer + Claude Code headers', auth: 'bearer', cc: true },
-  { name: 'x-api-key + Claude Code headers',            auth: 'xapi',   cc: true },
-  { name: 'Authorization Bearer, plain request',        auth: 'bearer', cc: false },
-  { name: 'x-api-key, plain request',                   auth: 'xapi',   cc: false },
+  { name: 'Same as Pace (Anthropic SDK style, Bearer token)', auth: 'bearer', sdk: true },
+  { name: 'Authorization Bearer, plain request',              auth: 'bearer' },
+  { name: 'x-api-key, plain request',                         auth: 'xapi' },
+  { name: 'Authorization Bearer + Claude Code headers',       auth: 'bearer', cc: true },
 ];
 
 function build(style, key, payload) {
@@ -27,6 +27,18 @@ function build(style, key, payload) {
   else headers['x-api-key'] = key;
 
   const body = { ...payload };
+  if (style.sdk) {
+    // What the official @anthropic-ai/sdk sends (the way Pace calls the platform): no extras, no system prompt.
+    headers['user-agent'] = 'Anthropic/JS 0.65.0';
+    headers['x-stainless-lang'] = 'js';
+    headers['x-stainless-package-version'] = '0.65.0';
+    headers['x-stainless-os'] = 'Linux';
+    headers['x-stainless-arch'] = 'x64';
+    headers['x-stainless-runtime'] = 'node';
+    headers['x-stainless-runtime-version'] = process.version;
+    headers['x-stainless-retry-count'] = '0';
+    headers['x-stainless-timeout'] = '600';
+  }
   if (style.cc) {
     headers['anthropic-beta'] = 'claude-code-20250219,interleaved-thinking-2025-05-14,fine-grained-tool-streaming-2025-05-14';
     headers['user-agent'] = 'claude-cli/2.0.14 (external, cli)';
