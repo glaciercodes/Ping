@@ -160,7 +160,8 @@ async function call(card,model,messages,max){
       body:JSON.stringify({base:p.url,key,payload:{model,max_tokens:max,messages}}),
     });
     const text=await res.text(); let json=null; try{json=JSON.parse(text)}catch{}
-    return {ok:res.ok,status:res.status,ms:Math.round(performance.now()-t0),text,json,viaRelay:res.headers.get('x-relay')==='1'};
+    return {ok:res.ok,status:res.status,ms:Math.round(performance.now()-t0),text,json,viaRelay:res.headers.get('x-relay')==='1',
+      style:res.headers.get('x-relay-style'),tried:+(res.headers.get('x-relay-tried')||0),rejected:res.headers.get('x-relay-rejected')==='1'};
   }catch(e){
     return {ok:false,status:0,ms:Math.round(performance.now()-t0),net:e.name+': '+e.message};
   }finally{clearTimeout(timer)}
@@ -170,7 +171,11 @@ async function call(card,model,messages,max){
 function raw(r){
   if(r.cfg) return r.cfg;
   if(r.net) return 'No response received.\nBrowser error: '+r.net;
-  let s='HTTP '+r.status+'  ('+r.ms+' ms)\n\n'+(r.json?JSON.stringify(r.json,null,2):(r.text||'(empty body)'));
+  let s='HTTP '+r.status+'  ('+r.ms+' ms)\n';
+  if(r.style) s+=r.rejected
+    ? 'Tried '+r.tried+' ways of sending your key. The platform rejected all of them, so it does not accept this key.\n'
+    : 'Sent as: '+r.style+(r.tried>1?'  (earlier styles were rejected)':'')+'\n';
+  s+='\n'+(r.json?JSON.stringify(r.json,null,2):(r.text||'(empty body)'));
   if(!r.viaRelay) s='This page is not running on Vercel with its api/relay.js file, so nothing reached the platform.\n\n'+s;
   return s;
 }
