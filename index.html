@@ -75,7 +75,7 @@
     <p><button id="clearAll">Clear everything saved in this browser</button></p>
   </details>
 
-  <footer>Your key is sent only to this site's own server and the platform you test. It is never stored in the code.</footer>
+  <footer>Keys are saved in this browser so they are still here when you come back. They are sent only to this site's own server and the platform you test, and never stored in the code.</footer>
 </div>
 
 <script>
@@ -97,24 +97,22 @@ const $$ = (s,r=document)=>[...r.querySelectorAll(s)];
 const esc = s=>String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const LS='modelPinger.v4';
 let store={}; try{store=JSON.parse(localStorage.getItem(LS)||'{}')||{}}catch{store={}}
-store.keys??={}; store.remember??={};
+store.keys??={}; store.models??={};
 const save=()=>{try{localStorage.setItem(LS,JSON.stringify(store))}catch{}};
 const chats={};
 
 function cardHTML(p){
-  const rem=!!store.remember[p.id];
   return `
   <details class="plat" data-p="${p.id}">
     <summary><span class="name">${esc(p.name)}</span><span class="pill" data-pill>Not tested</span><span class="arrow">&#9656;</span></summary>
     <div class="body">
       <label>API key
-        <input data-f="key" type="password" value="${esc(rem?(store.keys[p.id]||''):'')}" placeholder="Paste your API key" autocomplete="off" spellcheck="false">
+        <input data-f="key" type="password" value="${esc(store.keys[p.id]||'')}" placeholder="Paste your API key" autocomplete="off" spellcheck="false">
       </label>
-      <label class="chk"><input data-f="remember" type="checkbox" ${rem?'checked':''}> Remember this key on this device</label>
 
       <label>Model
         <select data-f="model">
-          ${MODELS.map(m=>`<option value="${m}">${m}</option>`).join('')}
+          ${MODELS.map(m=>`<option value="${m}"${store.models[p.id]===m?' selected':''}>${m}</option>`).join('')}
           <option value="__other">Other (type a model name)...</option>
         </select>
       </label>
@@ -167,17 +165,11 @@ async function call(card,model,messages,max){
   }finally{clearTimeout(timer)}
 }
 
-// Raw output only: status line + the body exactly as the platform sent it.
+// Raw output only: the status code + the body exactly as the platform sent it. No text of mine.
 function raw(r){
   if(r.cfg) return r.cfg;
-  if(r.net) return 'No response received.\nBrowser error: '+r.net;
-  let s='HTTP '+r.status+'  ('+r.ms+' ms)\n';
-  if(r.style) s+=r.rejected
-    ? 'Tried '+r.tried+' ways of sending your key. The platform rejected all of them, so it does not accept this key.\n'
-    : 'Sent as: '+r.style+(r.tried>1?'  (earlier styles were rejected)':'')+'\n';
-  s+='\n'+(r.json?JSON.stringify(r.json,null,2):(r.text||'(empty body)'));
-  if(!r.viaRelay) s='This page is not running on Vercel with its api/relay.js file, so nothing reached the platform.\n\n'+s;
-  return s;
+  if(r.net) return r.net;
+  return 'HTTP '+r.status+'\n\n'+(r.json?JSON.stringify(r.json,null,2):(r.text||''));
 }
 
 function setPill(card,ok,text){const p=$('[data-pill]',card);p.className='pill '+(ok?'ok':'bad');p.textContent=text}
@@ -237,13 +229,15 @@ document.addEventListener('click',async e=>{
 document.addEventListener('change',e=>{
   const card=e.target.closest('.plat'); if(!card) return;
   const pid=card.dataset.p, f=e.target.dataset.f;
-  if(f==='model'){$('[data-f=other]',card).hidden=e.target.value!=='__other';renderChat(card)}
+  if(f==='model'){$('[data-f=other]',card).hidden=e.target.value!=='__other';if(e.target.value!=='__other')store.models[pid]=e.target.value;renderChat(card)}
   if(f==='other') renderChat(card);
-  if(f==='remember') store.remember[pid]=e.target.checked;
-  if(f==='key'||f==='remember'){
-    if(store.remember[pid]) store.keys[pid]=$('[data-f=key]',card).value.trim(); else delete store.keys[pid];
-  }
+  if(f==='key') store.keys[pid]=e.target.value.trim();
   save();
+});
+// Save the key as it is typed or pasted, so it is never lost on reload.
+document.addEventListener('input',e=>{
+  if(e.target.dataset.f!=='key') return;
+  store.keys[e.target.closest('.plat').dataset.p]=e.target.value.trim(); save();
 });
 document.addEventListener('keydown',e=>{
   if(e.key==='Enter'&&(e.ctrlKey||e.metaKey)&&e.target.matches('[data-f=msg]')){e.preventDefault();send(e.target.closest('.plat'))}
