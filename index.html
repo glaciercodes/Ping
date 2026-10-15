@@ -87,10 +87,13 @@ const PLATFORMS = [
   {id:'kktoken',     name:'KKToken',     url:'https://kktoken.cc'},
   {id:'agentrouter', name:'AgentRouter', url:'https://agentrouter.org'},
 ];
-const MODELS = [
-  'claude-fable-5-1','claude-fable-5','claude-opus-5-5','claude-opus-5',
-  'claude-opus-4-8','claude-sonnet-5-5','claude-haiku-5-5',
+// Model IDs from the official OpenAI and Google model pages. For anything else, choose "Other" in the dropdown.
+const GROUPS = [
+  {label:'Claude', models:['claude-fable-5-1','claude-fable-5','claude-opus-5-5','claude-opus-5','claude-opus-4-8','claude-sonnet-5-5','claude-haiku-5-5']},
+  {label:'GPT (OpenAI)', models:['gpt-6.1-sol','gpt-6-astra','gpt-6-luna','gpt-5.6-sol','gpt-5.6-terra','gpt-5.6-luna']},
+  {label:'Gemini (Google)', models:['gemini-4-argon','gemini-3.8-flash','gemini-3.6-flash','gemini-3.5-flash-lite','gemini-3.1-pro-preview','gemini-3.1-flash-lite','gemini-3-flash-preview','gemini-2.5-pro','gemini-2.5-flash','gemini-2.5-flash-lite']},
 ];
+const MODELS = GROUPS.flatMap(g=>g.models);
 
 const $  = (s,r=document)=>r.querySelector(s);
 const $$ = (s,r=document)=>[...r.querySelectorAll(s)];
@@ -112,7 +115,7 @@ function cardHTML(p){
 
       <label>Model
         <select data-f="model">
-          ${MODELS.map(m=>`<option value="${m}"${store.models[p.id]===m?' selected':''}>${m}</option>`).join('')}
+          ${GROUPS.map(g=>`<optgroup label="${g.label}">${g.models.map(m=>`<option value="${m}"${store.models[p.id]===m?' selected':''}>${m}</option>`).join('')}</optgroup>`).join('')}
           <option value="__other">Other (type a model name)...</option>
         </select>
       </label>
@@ -140,10 +143,18 @@ $('#platforms').innerHTML=PLATFORMS.map(cardHTML).join('');
 
 // ---------- Network (goes through this site's own /api/relay, so the browser never blocks it) ----------
 const getModel=card=>{const s=$('[data-f=model]',card).value;return s==='__other'?$('[data-f=other]',card).value.trim():s};
+// Reads the reply text from any of the formats: Claude, GPT (chat completions / responses), Gemini.
 function extractText(j){
   if(!j) return '';
   if(Array.isArray(j.content)) return j.content.filter(b=>b.type==='text').map(b=>b.text).join('\n');
-  return j.choices?.[0]?.message?.content||'';
+  const ch=j.choices?.[0]?.message?.content;
+  if(typeof ch==='string') return ch;
+  if(Array.isArray(ch)) return ch.map(b=>b.text||'').join('\n');
+  if(typeof j.output_text==='string') return j.output_text;
+  if(Array.isArray(j.output)) return j.output.flatMap(o=>o.content||[]).map(b=>b.text||'').join('\n');
+  const parts=j.candidates?.[0]?.content?.parts;
+  if(Array.isArray(parts)) return parts.filter(x=>!x.thought).map(x=>x.text||'').join('');
+  return '';
 }
 
 async function call(card,model,messages,max){
@@ -193,6 +204,7 @@ async function send(card){
   const rb=$('[data-chatraw]',card); rb.hidden=false; $('pre',rb).textContent=raw(r);
   const reply=r.ok?extractText(r.json):'';
   if(reply){c.hist.push({role:'assistant',content:reply});c.ui.push({role:'bot',text:reply})}
+  else if(r.ok){c.hist.pop();c.ui.push({role:'bot',text:raw(r)})}   // platform answered 200 but with no text: show it as sent
   else{c.hist.pop();c.ui.push({err:true,text:raw(r)})}
   renderChat(card);
 }
