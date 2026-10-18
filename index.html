@@ -21,6 +21,7 @@
   .pill{font-size:13px;padding:4px 12px;border-radius:999px;background:var(--soft);color:var(--muted)}
   .pill.ok{background:var(--green-bg);color:var(--green)}
   .pill.bad{background:var(--red-bg);color:var(--red)}
+  .pill.warn{background:#fff6d6;color:#a16207}
   .arrow{color:var(--muted);transition:transform .15s}
   details.plat[open]>summary .arrow{transform:rotate(90deg)}
   .body{padding:4px 18px 20px;display:grid;gap:16px}
@@ -39,11 +40,13 @@
   .result{padding:12px 14px;border-radius:10px;max-height:340px;overflow:auto}
   .result.ok{background:var(--green-bg);color:#14532d}
   .result.bad{background:var(--red-bg);color:#7f1d1d}
+  .result.warn{background:#fff6d6;color:#713f12}
   .result.wait{background:var(--soft);color:var(--muted)}
   .list{display:grid;gap:8px}
   .list details{border-radius:10px;padding:10px 12px}
   .list details.ok{background:var(--green-bg);color:#14532d}
   .list details.bad{background:var(--red-bg);color:#7f1d1d}
+  .list details.warn{background:#fff6d6;color:#713f12}
   .list details.wait{background:var(--soft);color:var(--muted)}
   .list summary{cursor:pointer;font-size:14px}
   .list pre{margin-top:8px}
@@ -55,7 +58,9 @@
   .msg.user{background:var(--soft);justify-self:end}
   .msg.bot{background:var(--green-bg);border:1px solid #bfe8cf}
   .msg.err{background:var(--red-bg);border:1px solid #f5c2c2;color:#7f1d1d;max-width:100%;font:13px/1.5 ui-monospace,Menlo,Consolas,monospace}
+  .msg.warn{background:#fff6d6;border:1px solid #f1dc8a;color:#713f12;max-width:100%;font:13px/1.5 ui-monospace,Menlo,Consolas,monospace}
   .compose{display:grid;gap:8px}
+  .hint{font-size:13px;color:var(--muted);margin:0;word-break:break-all}
   .compose .row{display:flex;gap:8px}
   .chk{display:flex;align-items:center;gap:8px;font-size:14px;color:var(--muted)}
   .chk input{width:auto}
@@ -70,6 +75,20 @@
 
   <main id="platforms"></main>
 
+  <details class="plat" id="addbox">
+    <summary><span class="name">+ Add another third party</span><span class="arrow">&#9656;</span></summary>
+    <div class="body">
+      <label>Name (optional)
+        <input id="newName" placeholder="e.g. My Platform" autocomplete="off">
+      </label>
+      <label>Platform URL
+        <input id="newUrl" placeholder="https://example.com" inputmode="url" autocomplete="off" autocapitalize="off" spellcheck="false">
+      </label>
+      <div class="actions"><button class="primary" id="addPlat">Add third party</button></div>
+      <p class="hint" id="addMsg">It is added above with all Claude, GPT and Gemini models, a key box and chat. It stays saved in this browser.</p>
+    </div>
+  </details>
+
   <details class="more">
     <summary>Clear saved data</summary>
     <p><button id="clearAll">Clear everything saved in this browser</button></p>
@@ -79,7 +98,7 @@
 </div>
 
 <script>
-// To add a platform, add it here AND in api/relay.js (ALLOWED list).
+// Built-in platforms. Others are added with the "Add another third party" box at the bottom of the page.
 const PLATFORMS = [
   {id:'justwoker',   name:'Just Woker',  url:'https://api.justwoker.icu'},
   {id:'conduit',     name:'Conduit',     url:'https://conduit.ozdoev.net'},
@@ -100,9 +119,10 @@ const $$ = (s,r=document)=>[...r.querySelectorAll(s)];
 const esc = s=>String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const LS='modelPinger.v4';
 let store={}; try{store=JSON.parse(localStorage.getItem(LS)||'{}')||{}}catch{store={}}
-store.keys??={}; store.models??={};
+store.keys??={}; store.models??={}; store.custom??=[];
 const save=()=>{try{localStorage.setItem(LS,JSON.stringify(store))}catch{}};
 const chats={};
+const allPlatforms=()=>[...PLATFORMS,...store.custom];
 
 function cardHTML(p){
   return `
@@ -136,10 +156,11 @@ function cardHTML(p){
         <div class="row"><button class="primary" data-act="send">Send</button><button data-act="clearchat">Clear chat</button></div>
       </div>
       <details class="more" data-chatraw hidden><summary>Show raw response</summary><div class="result wait" style="margin-top:8px"><pre></pre></div></details>
+      ${p.custom?`<hr><p class="hint">${esc(p.url)}</p><div class="actions"><button data-act="removeplat">Remove this third party</button></div>`:''}
     </div>
   </details>`;
 }
-$('#platforms').innerHTML=PLATFORMS.map(cardHTML).join('');
+$('#platforms').innerHTML=allPlatforms().map(cardHTML).join('');
 
 // ---------- Network (goes through this site's own /api/relay, so the browser never blocks it) ----------
 const getModel=card=>{const s=$('[data-f=model]',card).value;return s==='__other'?$('[data-f=other]',card).value.trim():s};
@@ -161,7 +182,7 @@ async function call(card,model,messages,max){
   const key=$('[data-f=key]',card).value.trim();
   if(!key) return {ok:false,status:0,ms:0,cfg:'Paste your API key first.'};
   if(!model) return {ok:false,status:0,ms:0,cfg:'Choose a model first.'};
-  const p=PLATFORMS.find(x=>x.id===card.dataset.p);
+  const p=allPlatforms().find(x=>x.id===card.dataset.p);
   const ctrl=new AbortController(); const timer=setTimeout(()=>ctrl.abort(),65000); const t0=performance.now();
   try{
     const res=await fetch('/api/relay',{
@@ -183,14 +204,24 @@ function raw(r){
   return 'HTTP '+r.status+'\n\n'+(r.json?JSON.stringify(r.json,null,2):(r.text||''));
 }
 
-function setPill(card,ok,text){const p=$('[data-pill]',card);p.className='pill '+(ok?'ok':'bad');p.textContent=text}
+// Three states:
+//   ok   (green)  = the platform answered AND gave a real model reply
+//   warn (yellow) = the platform answered (HTTP 200) but the reply is empty / not a model reply
+//   bad  (red)    = no response, or the platform returned an error
+function state(r){
+  if(r.cfg||r.net||!r.ok) return 'bad';
+  return (r.json&&extractText(r.json).trim())?'ok':'warn';
+}
+const LABEL={ok:'Ping success, response received',warn:'Ping success, but empty response',bad:'Ping failed'};
+const shown=(r,s)=>(r.cfg?'':LABEL[s]+'\n\n')+raw(r);
+function setPill(card,cls,text){const p=$('[data-pill]',card);p.className='pill '+cls;p.textContent=text}
 async function pool(items,n,fn){const q=[...items];await Promise.all(Array.from({length:Math.min(n,q.length)},async()=>{while(q.length)await fn(q.shift())}))}
 const PING=[{role:'user',content:'Reply with the single word: pong'}];
 
 // ---------- Chat ----------
 function renderChat(card){
   const k=card.dataset.p+'::'+getModel(card), c=chats[k]||{ui:[]}, box=$('[data-msgs]',card);
-  box.innerHTML=c.ui.map(m=>`<div class="msg ${m.err?'err':m.role==='user'?'user':'bot'}">${esc(m.text)}</div>`).join('');
+  box.innerHTML=c.ui.map(m=>`<div class="msg ${m.err?'err':m.warn?'warn':m.role==='user'?'user':'bot'}">${esc(m.text)}</div>`).join('');
   box.scrollTop=box.scrollHeight;
 }
 async function send(card){
@@ -202,9 +233,9 @@ async function send(card){
   const r=await call(card,model,c.hist,1024);
   btn.disabled=false; btn.textContent='Send';
   const rb=$('[data-chatraw]',card); rb.hidden=false; $('pre',rb).textContent=raw(r);
-  const reply=r.ok?extractText(r.json):'';
-  if(reply){c.hist.push({role:'assistant',content:reply});c.ui.push({role:'bot',text:reply})}
-  else if(r.ok){c.hist.pop();c.ui.push({role:'bot',text:raw(r)})}   // platform answered 200 but with no text: show it as sent
+  const st=state(r);
+  if(st==='ok'){const reply=extractText(r.json);c.hist.push({role:'assistant',content:reply});c.ui.push({role:'bot',text:reply})}
+  else if(st==='warn'){c.hist.pop();c.ui.push({warn:true,text:shown(r,st)})}   // answered, but empty / not a model reply
   else{c.hist.pop();c.ui.push({err:true,text:raw(r)})}
   renderChat(card);
 }
@@ -218,22 +249,27 @@ document.addEventListener('click',async e=>{
     b.disabled=true;
     const r=await call(card,getModel(card),PING,16);
     b.disabled=false;
-    res.className='result '+(r.ok?'ok':'bad'); $('pre',res).textContent=raw(r);
-    setPill(card,r.ok,r.ok?'Working':'Not working');
+    const st=state(r); res.className='result '+st; $('pre',res).textContent=shown(r,st);
+    setPill(card,st,{ok:'Working',warn:'Empty response',bad:'Not working'}[st]);
   }
   else if(act==='testall'){
     const list=$('[data-list]',card);
     list.innerHTML=MODELS.map(m=>`<details class="wait" data-m="${m}"><summary>${m} ...</summary><pre></pre></details>`).join('');
     b.disabled=true; b.textContent='Testing...';
-    let good=0;
+    const n={ok:0,warn:0,bad:0};
     await pool(MODELS,3,async m=>{
-      const r=await call(card,m,PING,16); if(r.ok) good++;
-      const d=$(`[data-m="${m}"]`,card); d.className=r.ok?'ok':'bad';
-      $('summary',d).textContent=(r.ok?'✓ ':'✗ ')+m+(r.status?'  (HTTP '+r.status+')':'  (no response)');
-      $('pre',d).textContent=raw(r);
+      const r=await call(card,m,PING,16); const st=state(r); n[st]++;
+      const d=$(`[data-m="${m}"]`,card); d.className=st;
+      $('summary',d).textContent=(st==='ok'?'✓ ':st==='warn'?'! ':'✗ ')+m+(r.status?'  (HTTP '+r.status+(st==='warn'?', empty response':'')+')':'  (no response)');
+      $('pre',d).textContent=shown(r,st);
     });
     b.disabled=false; b.textContent='Test all models';
-    setPill(card,good>0,good+' of '+MODELS.length+' working');
+    setPill(card,n.ok?'ok':n.warn?'warn':'bad',n.ok+' of '+MODELS.length+' working'+(n.warn?', '+n.warn+' empty':''));
+  }
+  else if(act==='removeplat'){
+    const id=card.dataset.p, p=store.custom.find(x=>x.id===id);
+    if(!confirm('Remove '+(p?p.name:'this third party')+' and its saved key?')) return;
+    store.custom=store.custom.filter(x=>x.id!==id); delete store.keys[id]; delete store.models[id]; save(); card.remove();
   }
   else if(act==='send') send(card);
   else if(act==='clearchat'){delete chats[card.dataset.p+'::'+getModel(card)];renderChat(card);$('[data-chatraw]',card).hidden=true}
@@ -254,8 +290,34 @@ document.addEventListener('input',e=>{
 document.addEventListener('keydown',e=>{
   if(e.key==='Enter'&&(e.ctrlKey||e.metaKey)&&e.target.matches('[data-f=msg]')){e.preventDefault();send(e.target.closest('.plat'))}
 });
+// ---------- Add another third party ----------
+function normalizeUrl(raw){
+  let t=raw.trim(); if(!t) return null;
+  if(!/^[a-z]+:\/\//i.test(t)) t='https://'+t;
+  let u; try{u=new URL(t)}catch{return null}
+  if(u.protocol!=='https:'||!u.hostname.includes('.')) return null;
+  const path=u.pathname.replace(/\/+$/,'').replace(/\/(v1|v1beta)(\/.*)?$/i,'');  // a pasted ".../v1/messages" becomes the base address
+  return u.origin+path;
+}
+$('#addPlat').addEventListener('click',()=>{
+  const msg=$('#addMsg'), url=normalizeUrl($('#newUrl').value);
+  if(!url){msg.textContent='Enter the platform address, starting with https://';return}
+  const dup=allPlatforms().find(p=>p.url.toLowerCase()===url.toLowerCase());
+  let card;
+  if(dup){card=$(`.plat[data-p="${dup.id}"]`);msg.textContent='That platform is already in the list.'}
+  else{
+    const p={id:'c'+Date.now().toString(36),name:$('#newName').value.trim()||new URL(url).hostname,url,custom:true};
+    store.custom.push(p); save();
+    $('#platforms').insertAdjacentHTML('beforeend',cardHTML(p));
+    card=$(`.plat[data-p="${p.id}"]`);
+    msg.textContent='Added "'+p.name+'". It is saved in this browser.';
+  }
+  $('#newName').value=''; $('#newUrl').value='';
+  card.open=true; card.scrollIntoView({behavior:'smooth',block:'start'}); $('[data-f=key]',card).focus();
+});
+
 $('#clearAll').addEventListener('click',()=>{
-  if(!confirm('Remove all saved keys and settings from this browser?')) return;
+  if(!confirm('Remove all saved keys and any third parties you added from this browser?')) return;
   try{localStorage.removeItem(LS)}catch{} location.reload();
 });
 </script>
