@@ -2,16 +2,24 @@
 // and returns the platform's reply exactly as it came back.
 // It picks the request format from the model name (Claude / GPT / Gemini) and, if the platform
 // refuses one way of asking, tries the next way before giving up.
-const ALLOWED = [
-  'api.justwoker.icu',
-  'conduit.ozdoev.net',
-  'tabitoken.com',
-  'kktoken.cc',
-  'agentrouter.org',
-];
+// Any public https platform is allowed (so you can add third parties from the page).
+// Optional lock: set an ALLOWED_HOSTS environment variable in Vercel, e.g. "api.justwoker.icu,tabitoken.com",
+// and only those hosts will be accepted.
+const LOCK = (process.env.ALLOWED_HOSTS || '').split(',').map((x) => x.trim().toLowerCase()).filter(Boolean);
+
+function hostAllowed(u) {
+  if (u.protocol !== 'https:') return false;
+  if (u.port && u.port !== '443') return false;
+  const h = u.hostname.toLowerCase();
+  if (!h.includes('.') || h.includes(':') || /^\d+\.\d+\.\d+\.\d+$/.test(h)) return false;      // no bare IPs
+  if (/(^|\.)(localhost|local|internal|lan|home|corp)$/.test(h)) return false;                       // no internal names
+  return LOCK.length ? LOCK.includes(h) : true;
+}
 
 const JSON_H = { 'content-type': 'application/json', 'accept': 'application/json' };
 const bearer = (k) => ({ authorization: 'Bearer ' + k });
+
+function isJson(t) { try { JSON.parse(t); return true; } catch { return false; } }
 
 function family(model) {
   const m = String(model).toLowerCase();
@@ -95,12 +103,13 @@ module.exports = async (req, res) => {
   const { base, key, payload } = req.body || {};
   let u;
   try { u = new URL(base); } catch { return res.status(400).json({ relay_error: 'Bad platform address' }); }
-  if (u.protocol !== 'https:' || !ALLOWED.includes(u.hostname)) {
+  if (!hostAllowed(u)) {
     return res.status(403).json({ relay_error: 'Platform not allowed: ' + u.hostname });
   }
   if (!key || !payload || !Array.isArray(payload.messages)) return res.status(400).json({ relay_error: 'Missing key or payload' });
   if (!/^[A-Za-z0-9._:\/-]+$/.test(String(payload.model || ''))) return res.status(400).json({ relay_error: 'Bad model name' });
 
+  const prefix = u.pathname.replace(/\/+$/, ''); // supports platforms served under a path
   const fam = family(payload.model);
   const attempts = fam === 'gemini' ? geminiAttempts(key, payload)
                  : fam === 'openai' ? openaiAttempts(key, payload)
@@ -118,14 +127,16 @@ module.exports = async (req, res) => {
     const a = attempts[i];
     let up, text;
     try {
-      up = await fetch(u.origin + a.path, { method: 'POST', headers: a.headers, body: a.body });
+      up = await fetch(u.origin + prefix + a.path, { method: 'POST', headers: a.headers, body: a.body });
       text = await up.text();
     } catch (e) {
       return res.status(502).json({ relay_error: 'Server could not reach the platform: ' + String(e) });
     }
     const r = { status: up.status, text, type: up.headers.get('content-type'), style: a.name };
     first = first || r;
-    if (up.status < 400 || !a.retry(up.status)) return reply(r, i + 1);
+    // A 200 whose body is not JSON (for example a security-check web page) is not a model reply: try the next way.
+    const notModelReply = up.status < 400 && !isJson(text);
+    if (!notModelReply && (up.status < 400 || !a.retry(up.status))) return reply(r, i + 1);
   }
   return reply(first, attempts.length); // every way failed: show the first (main) reply
 };
